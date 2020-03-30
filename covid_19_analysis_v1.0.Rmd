@@ -1,0 +1,295 @@
+---
+title: "COVID-19 qPCR Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r initialize}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+```
+
+# R Markdown
+
+```{r Read Data}
+
+qpcr_data <- read_excel("/Users/English/Desktop/03-23_002COVID19.xls", sheet='Results', skip=40)
+qpcr_data2 <- read_excel("/Users/English/Desktop/03-23_002COVID19.xls")
+
+run_ID <- '00003'
+inst_num <- qpcr_data2[32,2]
+date <- qpcr_data2[24,2]
+
+```
+
+```{r result format}
+# 1 – specimen identifier (CID# or Accession #), this must be a BMC identifier
+# 2 – well # or id (optional)
+# 3 – test code
+# 4 – test result (numeric or text interpretation)
+# 5 – method/device (if more than one analyzer exists) [available in Sunquest SRT type 50 transaction]
+# 6 – instrument result data/time stamp (optional) [available in Sunquest SRT type 50 transaction]
+# 7 – CR LF (carriage return and line feed)
+```
+
+
+# Formatting the Data
+
+```{r Format Data}
+
+qpcr_data$CT <- gsub("Undetermined", "45", qpcr_data$CT)
+qpcr_data$CT <- as.numeric(qpcr_data$CT)
+
+qpcr_data$testID <- run_ID
+qpcr_data$instrument <- inst_num[,1]$`384-Well Block`
+qpcr_data$date <- date$`384-Well Block`
+
+
+N1 <- qpcr_data %>% filter(`Target Name` == 'N1')
+N2 <- qpcr_data %>% filter(`Target Name` == 'N2')
+RP <- qpcr_data %>% filter(`Target Name` == 'RP')
+
+```
+
+```{r Split}
+
+N1 <- qpcr_data %>% filter(`Target Name` == 'N1')
+N2 <- qpcr_data %>% filter(`Target Name` == 'N2')
+RP <- qpcr_data %>% filter(`Target Name` == 'RP')
+
+```
+
+# QC
+```{r QC}
+#Look for inconsistent results
+
+N1 <- N1 %>% arrange(`Sample Name`)
+N2 <- N2 %>% arrange(`Sample Name`)
+RP <- RP %>% arrange(`Sample Name`)
+
+N1Res <- function(N1){
+    sapply(N1$CT, function(x) if(x <= 39) "1" else if (x > 39) "0")
+}
+
+N1$Result <- as.numeric(N1Res(N1))
+N2$Result <- as.numeric(N1Res(N2))
+RP$Result <- as.numeric(N1Res(RP))
+
+N1$Consistency = 0
+N2$Consistency = 0
+RP$Consistency = 0
+
+for (i in 1:nrow(N1)) {
+  if (i %% 2 == 0) {
+    if (N1[i,]$Result == N1[i-1,]$Result) {
+      N1[i,]$Consistency = 1
+      N1[i-1,]$Consistency = 1
+    }
+  }
+}
+
+for (i in 1:nrow(N2)) {
+  if (i %% 2 == 0) {
+    if (N2[i,]$Result == N2[i-1,]$Result) {
+      N2[i,]$Consistency = 1
+      N2[i-1,]$Consistency = 1
+    }
+  }
+}
+
+for (i in 1:nrow(RP)) {
+  if (i %% 2 == 0) {
+    if (RP[i,]$Result == RP[i-1,]$Result) {
+      RP[i,]$Consistency = 1
+      RP[i-1,]$Consistency = 1
+    }
+  }
+}
+
+N1$N1Res = 1
+N2$N2Res = 1
+RP$RPRes = 1
+
+for (i in 1:nrow(N1)) {
+  if (N1[i,]$Result == 1 & N1[i,]$Consistency == 1) {
+    N1[i,]$N1Res = 1
+  }
+  else if(N1[i,]$Result == 0 & N1[i,]$Consistency == 1) {
+    N1[i,]$N1Res = 0
+  }
+  else if(N1[i,]$Consistency == 0) {
+    N1[i,]$N1Res = 2
+  }
+}
+
+for (i in 1:nrow(N2)) {
+  if (N2[i,]$Result == 1 & N2[i,]$Consistency == 1) {
+    N2[i,]$N2Res = 1
+  }
+  else if(N2[i,]$Result == 0 & N2[i,]$Consistency == 1) {
+    N2[i,]$N2Res = 0
+  }
+  else if(N2[i,]$Consistency == 0) {
+    N2[i,]$N2Res = 2
+  }
+}
+
+for (i in 1:nrow(RP)) {
+  if (RP[i,]$Result == 1 & RP[i,]$Consistency == 1) {
+    RP[i,]$RPRes = 1
+  }
+  else if(RP[i,]$Result == 0 & RP[i,]$Consistency == 1) {
+    RP[i,]$RPRes = 0
+  }
+  else if(RP[i,]$Consistency == 0) {
+    RP[i,]$RPRes = 2
+  }
+}
+
+N1Results <- data.frame(N1$`Sample Name`, N1$Well, N1$testID, N1$N1Res, N1$instrument, N1$date)
+N1Results$SampleName <- N1Results$N1..Sample.Name.
+N1Results <- distinct(N1Results, SampleName, .keep_all=TRUE)
+rownames(N1Results) <- N1Results$SampleName
+N2Results <- data.frame(N2$`Sample Name`, N2$Well, N2$testID, N2$N2Res, N2$instrument, N2$date)
+N2Results$SampleName <- N2Results$N2..Sample.Name.
+N2Results <- distinct(N2Results, SampleName, .keep_all=TRUE)
+rownames(N2Results) <- N2Results$SampleName
+RPResults <- data.frame(RP$`Sample Name`, RP$Well, RP$testID, RP$RPRes, RP$instrument, RP$date)
+RPResults$SampleName <- RPResults$RP..Sample.Name.
+RPResults <- distinct(RPResults, SampleName, .keep_all=TRUE)
+rownames(RPResults) <- RPResults$SampleName
+
+
+
+Final <- merge(N1Results, N2Results, by = 'SampleName')
+
+Final2 <- merge(Final, RPResults, by = 'SampleName')
+
+#Final Logic
+  #If N1, N2 = 1, Positive
+  #If N1 = 0, N2 = 1 or N1 = 1, N2 = 0, Inconclusive
+  #If N1 = 0, N2 = 0, RP = 1, Negative
+  #If N1 = 2 or N2 = 2, Invalid (Bad technical replicates)
+  #If N1 = 0, N2 = 0, RP = 0 or 2, Invalid
+
+Final2$FinalResult = 'FIX'
+
+
+
+```
+
+```{r finalresults}
+
+for (i in 1:nrow(Final2)) {
+  if (Final2[i,]$N1.N1Res == 1 & Final2[i,]$N2.N2Res == 1) {
+    Final2[i,]$FinalResult = 'POSITIVE'
+  }
+  else if(Final2[i,]$N1.N1Res == 1 & Final2[i,]$N2.N2Res == 0)  {
+    Final2[i,]$FinalResult = 'INCONCLUSIVE'
+  }
+  else if(Final2[i,]$N1.N1Res == 0 & Final2[i,]$N2.N2Res == 1)  {
+    Final2[i,]$FinalResult = 'INCONCLUSIVE'
+  }
+  else if(Final2[i,]$N1.N1Res == 0 & Final2[i,]$N2.N2Res == 0 & Final2[i,]$RP.RPRes == 1)  {
+    Final2[i,]$FinalResult = 'NEGATIVE'
+  }
+  else if(Final2[i,]$N1.N1Res == 0 & Final2[i,]$N2.N2Res == 0 & Final2[i,]$RP.RPRes == 0)  {
+    Final2[i,]$FinalResult = 'INVALID'
+  }
+  else if(Final2[i,]$N1.N1Res == 2)  {
+    Final2[i,]$FinalResult = 'INCONCLUSIVE_BAD_REPLICATE'
+  }
+  else if(Final2[i,]$N2.N2Res == 2)  {
+    Final2[i,]$FinalResult = 'INCONCLUSIVE_BAD_REPLICATE'
+  }
+  else if(Final2[i,]$N1.N1Res == 0 & Final2[i,]$N2.N2Res == 0 & Final2[i,]$RP.RPRes == 2)  {
+    Final2[i,]$FinalResult = 'INCONCLUSIVE_BAD_REPLICATE'
+  }
+}
+
+```
+
+# Results
+
+### Positive
+
+```{r Positive}
+
+for (i in 1:nrow(Final2)) {
+  if (Final2[i,]$FinalResult == 'POSITIVE') {
+    print(as.character(Final2[i,]$SampleName), quote=FALSE)
+  }
+}
+
+```
+
+### Negative
+
+```{r Negative}
+
+for (i in 1:nrow(Final2)) {
+  if (Final2[i,]$FinalResult == 'NEGATIVE') {
+    print(as.character(Final2[i,]$SampleName), quote=FALSE)
+  }
+}
+
+```
+
+### Inconclusive (N1 and N2 are inconsistent)
+
+```{r Inconclusive}
+
+for (i in 1:nrow(Final2)) {
+  if (Final2[i,]$FinalResult == 'INCONCLUSIVE') {
+    print(as.character(Final2[i,]$SampleName), quote=FALSE)
+  }
+}
+
+```
+
+### Inconclusive (Technical replicates are inconsistent)
+
+```{r Inconclusive TechRep}
+
+for (i in 1:nrow(Final2)) {
+  if (Final2[i,]$FinalResult == 'INCONCLUSIVE_BAD_REPLICATE') {
+    print(as.character(Final2[i,]$SampleName), quote=FALSE)
+  }
+}
+
+```
+
+### Invalid
+
+```{r Invalid}
+
+for (i in 1:nrow(Final2)) {
+  if (Final2[i,]$FinalResult == 'INVALID') {
+    print(as.character(Final2[i,]$SampleName), quote=FALSE)
+  }
+}
+
+```
+
+```{r format it}
+
+N1Results$final <- Final2$FinalResult
+N1Results$N1.N1Res <- N1Results$final
+
+names(N1Results)[names(N1Results) == "N1..Sample.Name."] <- "Sample"
+names(N1Results)[names(N1Results) == "N1.Well"] <- "Well"
+names(N1Results)[names(N1Results) == "N1.testID"] <- "TestID"
+names(N1Results)[names(N1Results) == "N1.N1Res"] <- "Result"
+names(N1Results)[names(N1Results) == "N1.instrument"] <- "Instrument"
+names(N1Results)[names(N1Results) == "N1.date"] <- "Date"
+
+drop <- c("SampleName","final")
+sunquest_format = N1Results[,!(names(N1Results) %in% drop)]
+
+write.csv(sunquest_format, file="/Users/English/Desktop/test00003.csv", quote=FALSE, row.names = FALSE)
+```
+
